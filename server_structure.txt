@@ -1,0 +1,228 @@
+﻿[DIRECTORY TREE]
++-- Program.cs
++-- Server.Blockchain.cs
++-- Server.Manager.cs
++-- Server.Networking.cs
++-- Server.Node.cs
++-- Server.Storage.cs
+
+
+
+[FILE CONTENTS]
+=== FILE: Program.cs ===
+namespace server
+{
+    internal class Program
+    {
+        static void Main(string[] args)
+        {
+            Console.WriteLine("Hello, World!");
+        }
+    }
+}
+
+---
+
+=== FILE: Server.Blockchain.cs ===
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace server.src
+{
+    internal class Blockchain
+    {
+        private class Block
+        {
+
+        }
+
+        public void ExportToFile(string filename)
+        {
+
+        }
+    }
+}
+
+---
+
+=== FILE: Server.Manager.cs ===
+using System;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
+
+namespace server
+{
+    internal class ServerManager
+    {
+        private TcpListener listener;
+        private List<Node.NodeInfo> nodes;
+        private readonly object nodeLock;
+        
+        public ServerManager(int port)
+        {
+            listener = new(IPAddress.Any, port);
+            nodes = new();
+            nodeLock = new();
+        }
+
+        public void Start()
+        {
+            listener.Start();
+            Console.WriteLine("Server is running");
+            Task.Run(() => ListenForConnections());
+        }
+
+        private async Task ListenForConnections()
+        {
+            while (true)
+            {
+                TcpClient client = await listener.AcceptTcpClientAsync();
+                _ = Task.Run(() => HandleClient(client));
+            }
+        }
+
+        private void HandleClient(TcpClient client)
+        {
+            using NetworkStream stream = client.GetStream();
+            byte[] buffer = new byte[4096];
+            try
+            {
+                int bytesRead = stream.Read(buffer, 0, buffer.Length);
+
+                if (bytesRead == 0) return;
+
+                string request = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+                string[] parts = request.Split(';');
+
+                switch (parts[0])
+                {
+                    case "REGISTER":
+                        RegisterNode(Newtonsoft.Json.JsonConvert.DeserializeObject<Node.NodeInfo>(parts[1]));
+                        break;
+                    case "GET_NODES":
+                        SendNodesToClient(stream, Convert.ToInt32(parts[1]));
+                        break;
+                    default:
+                        stream.Write(Encoding.UTF8.GetBytes("Error: unknown command"));
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error handling client: {ex.Message}");
+            }
+            finally
+            {
+                client.Close();
+            }
+        }
+
+        private void RegisterNode(Node.NodeInfo nodeInfo)
+        {
+            if (!nodes.Any(n => n.NodeID == nodeInfo.NodeID))
+            {
+                lock (nodeLock)
+                {
+                    nodes.Add(nodeInfo);
+                }
+                Console.WriteLine($"Node {nodeInfo.NodeID} added");
+            }
+        }
+        private void SendNodesToClient(NetworkStream stream, int count)
+        {
+            List<Node.NodeInfo> selectedNodes;
+            lock (nodeLock)
+            {
+                selectedNodes = SelectOptimalNodes(
+                    nodes
+                    .Where(n => (DateTime.UtcNow - n.LastActive).TotalSeconds < 30)
+                    .ToList(), count
+                    );
+            }
+            
+            string json = Newtonsoft.Json.JsonConvert.SerializeObject(selectedNodes);
+            byte[] response = Encoding.UTF8.GetBytes(json);
+            try
+            {
+                stream.Write(response, 0, response.Length);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error sending nodes: {ex.Message}");
+            }
+        }
+        private List<Node.NodeInfo> SelectOptimalNodes(List<Node.NodeInfo> activeNodes, int count)
+        {
+            var random = new Random();
+            return activeNodes
+                .OrderBy(_ => random.Next())
+                .Take(count)
+                .ToList();
+        }
+    }
+}
+
+---
+
+=== FILE: Server.Networking.cs ===
+using System;
+
+namespace server
+{
+    internal class Server
+    {
+    }
+}
+
+---
+
+=== FILE: Server.Node.cs ===
+using System;
+using System.Net;
+
+namespace server
+{
+    internal partial class Node
+    {
+        public NodeInfo nodeInfo;
+        //private Storage
+        public Node(string ipAddress, int port)
+        {
+            nodeInfo = new();
+            nodeInfo.NodeID = Guid.NewGuid();
+            nodeInfo.IP = IPAddress.Parse(ipAddress);
+            nodeInfo.Port = port;
+            nodeInfo.LastActive = DateTime.UtcNow;
+        }
+    }
+
+    internal partial class Node
+    {
+        public class NodeInfo
+        {
+            public Guid NodeID { get; set; }
+            public IPAddress IP { get; set; }
+            public int Port { get; set; }
+            public DateTime LastActive { get; set; }
+        }
+    }
+}
+
+---
+
+=== FILE: Server.Storage.cs ===
+using System;
+
+namespace server
+{
+    internal partial class Server
+    {
+    }
+}
+
+---
+

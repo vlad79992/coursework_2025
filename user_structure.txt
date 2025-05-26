@@ -1,0 +1,180 @@
+﻿[DIRECTORY TREE]
++-- Data.Base.cs
++-- Data.Cryptography.cs
++-- Data.Networking.cs
++-- Program.cs
+
+
+
+[FILE CONTENTS]
+=== FILE: Data.Base.cs ===
+namespace user
+{
+    public partial class Data
+    {
+
+        public Guid ID { get; private set; }
+
+        public byte[] EncryptedData { get; private set; }
+        public byte[] DataHash { get; private set; }
+        public DateTime CreationTime { get; private set; }
+        public DateTime UpdateTime { get; private set; }
+
+        public Data(byte[] encryptedData)
+        {
+            ID = Guid.NewGuid();
+            EncryptedData = encryptedData;
+            DataHash = ComputeHash(encryptedData);
+            CreationTime = DateTime.UtcNow;
+            UpdateTime = DateTime.UtcNow;
+
+        }
+
+        public void UpdateData(byte[] encryptedData)
+        {
+            EncryptedData = encryptedData;
+            DataHash = ComputeHash(encryptedData);
+            UpdateTime = DateTime.UtcNow;
+        }
+
+        public bool VerifyData(byte[] encryptedData)
+        {
+            byte[] hash = ComputeHash(encryptedData);
+            return DataHash == hash;
+        }
+    }
+}
+
+---
+
+=== FILE: Data.Cryptography.cs ===
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
+
+namespace user
+{
+    public partial class Data
+    {
+        public static byte[] ComputeHash(byte[] data)
+        {
+            byte[] hashBytes = SHA256
+                .Create()
+                .ComputeHash(data);
+            return hashBytes;
+        }
+
+        public static byte[] EncryptData(byte[] data, byte[] key)
+        {
+            using Aes aes = Aes.Create();
+            //iv - инициализирующий вектор, случайное значение, нужное, чтобы
+            //две одинаковые пары данных и пароля давали разные зашифрованные значения
+            aes.Key = ComputeHash(key);
+            byte[] iv = aes.IV;
+
+            using MemoryStream memoryStream = new();
+            memoryStream.Write(iv, 0, iv.Length);
+
+            using (CryptoStream cryptoStream = new(
+                memoryStream,
+                aes.CreateEncryptor(),
+                CryptoStreamMode.Write))
+            {
+                cryptoStream.Write(data, 0, data.Length);
+            }
+            return memoryStream.ToArray();
+        }
+
+        public static byte[] DecryptData(byte[] encryptedData, byte[] key)
+        {
+            using Aes aes = Aes.Create();
+            byte[] iv = new byte[aes.IV.Length];
+
+            using MemoryStream memoryStream = new(encryptedData);
+            memoryStream.Read(iv, 0, iv.Length);
+
+            using CryptoStream cryptoStream = new(
+                memoryStream,
+                aes.CreateDecryptor(ComputeHash(key), iv),
+                CryptoStreamMode.Read);
+            
+            using MemoryStream decryptedStream = new();
+            cryptoStream.CopyTo(decryptedStream);
+            return decryptedStream.ToArray();
+        }
+
+        public static byte[] EncryptKey(byte[] key, byte[] publicKey)
+        {
+            using RSACryptoServiceProvider rsa = new();
+            rsa.ImportRSAPublicKey(publicKey, out _);
+            return rsa.Encrypt(key, RSAEncryptionPadding.Pkcs1);
+        }
+        public static byte[] DecryptKey(byte[] encryptedKey, byte[] PrivateKey)
+        {
+            using RSACryptoServiceProvider rsa = new();
+            rsa.ImportPkcs8PrivateKey(PrivateKey, out _);
+            return rsa.Decrypt(encryptedKey, RSAEncryptionPadding.Pkcs1);
+        }
+    }
+}
+
+---
+
+=== FILE: Data.Networking.cs ===
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace user
+{
+    public partial class Data
+    {
+    }
+}
+
+---
+
+=== FILE: Program.cs ===
+using System.Security.Cryptography;
+using System.Text;
+
+namespace user
+{
+    internal class Program
+    {
+        static void Main(string[] args)
+        {
+            byte[] str = Encoding.UTF8.GetBytes("data");
+            byte[] key = Data.ComputeHash(Encoding.UTF8.GetBytes("key"));
+            Console.WriteLine($"Initial data:               {Encoding.UTF8.GetString(str)}");
+            Console.WriteLine($"Initial data    (base64):   {Convert.ToBase64String(str)}");
+            
+
+            byte[] encryptedData = Data.EncryptData(str, key);
+            Console.WriteLine($"Encrypted data  (base64):   {Convert.ToBase64String(encryptedData)}");
+
+            byte[] decryptedData = Data.DecryptData(encryptedData, key);
+            Console.WriteLine($"Decrypted data:             {Encoding.UTF8.GetString(decryptedData)}");
+
+            Console.WriteLine();
+
+            using var rsa = new RSACryptoServiceProvider(2048);
+
+            byte[] publicKey = rsa.ExportRSAPublicKey();
+            byte[] privateKey = rsa.ExportPkcs8PrivateKey();
+
+            var encryptedKey = Data.EncryptKey(key, publicKey);
+            var decryptedKey = Data.DecryptKey(encryptedKey, privateKey);
+
+            Console.WriteLine($"Initial key     (base64):   {Convert.ToBase64String(key)}");
+            Console.WriteLine($"Encrypted key   (base64):   {Convert.ToBase64String(encryptedKey)}");
+            Console.WriteLine($"Decrypted key   (base64):   {Convert.ToBase64String(decryptedKey)}");
+            
+            Console.WriteLine("------------------");
+        }
+    }
+}
+
+---
+

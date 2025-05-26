@@ -3,9 +3,9 @@
   <Class Name="user.Data">
     <Position X="1.75" Y="1.25" Width="4.25" />
     <TypeIdentifier>
-      <HashCode>gAAAAACAEAAAgQAAAAAAAAAAAEAAAAAAAAAAgAAAAAA=</HashCode>
+      <HashCode>gAAAAACAEAAAgQAAAAAACAAAAEEAAAAQAgAAiAAAAAA=</HashCode>
       <FileName>src\Data.Base.cs</FileName>
-      <NewMemberFileName>Data.Cryptography.cs</NewMemberFileName>
+      <NewMemberFileName>src\Data.Networking.cs</NewMemberFileName>
     </TypeIdentifier>
   </Class>
   <Font Name="Segoe UI" Size="9" />
