@@ -2,8 +2,28 @@
 <ClassDiagram MajorVersion="1" MinorVersion="1" MembersFormat="FullSignature">
   <Class Name="user.Data">
     <Position X="1.75" Y="1.25" Width="4.25" />
+    <Compartments>
+      <Compartment Name="Nested Types" Collapsed="false" />
+    </Compartments>
+    <NestedTypes>
+      <Class Name="user.Data.DataInfo" Collapsed="true">
+        <TypeIdentifier>
+          <NewMemberFileName>src\Data.Base.cs</NewMemberFileName>
+        </TypeIdentifier>
+      </Class>
+      <Class Name="user.Data.Request">
+        <TypeIdentifier>
+          <NewMemberFileName>src\Data.Networking.cs</NewMemberFileName>
+        </TypeIdentifier>
+      </Class>
+      <Class Name="user.Data.DataPart" Collapsed="true">
+        <TypeIdentifier>
+          <NewMemberFileName>src\Data.Part.cs</NewMemberFileName>
+        </TypeIdentifier>
+      </Class>
+    </NestedTypes>
     <TypeIdentifier>
-      <HashCode>gAAAAACAEAAAgQAAAAAACAAAAEEAAAAQAgAAiAAAAAA=</HashCode>
+      <HashCode>AggAAACAEIAAAAAAAAAACAAAAUEAACAQAgAACAABAAA=</HashCode>
       <FileName>src\Data.Base.cs</FileName>
       <NewMemberFileName>src\Data.Networking.cs</NewMemberFileName>
     </TypeIdentifier>

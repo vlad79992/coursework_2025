@@ -57,8 +57,7 @@ namespace server
                         DeleteData(stream, request.data);
                         break;
                     default:
-                        stream.Write(
-                            new user.Data.Request("ERROR", Encoding.UTF8.GetBytes("Unknown command\n"))
+                        stream.Write(new user.Data.Request("ERROR", Encoding.UTF8.GetBytes("Unknown command\n"))
                             .ToByteArray());
                         break;
                 }

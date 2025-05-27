@@ -8,6 +8,7 @@ namespace server
 {
     internal class Blockchain
     {
+        //not implemented yet
         private class Block
         {
 

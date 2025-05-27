@@ -7,7 +7,6 @@
             public DateTime CreationTime { get; set; }
             public DateTime UpdateTime { get; set; }
             public byte[] DataHash { get; set; }
-
         }
 
         private byte[] EncryptedData { get; set; }
@@ -17,6 +16,7 @@
         {
             dataInfo = new();
             EncryptedData = encryptedData;
+            dataInfo = new();
             dataInfo.DataHash = ComputeHash(encryptedData);
             dataInfo.CreationTime = DateTime.UtcNow;
             dataInfo.UpdateTime = DateTime.UtcNow;
