@@ -6,7 +6,7 @@ namespace server
     {
         public NodeInfo nodeInfo;
         private Storage storage;
-        public Node(string ipAddress, int port)
+        public Node(string ipAddress, short port)
         {
             nodeInfo = new();
             nodeInfo.NodeID = Guid.NewGuid();
@@ -23,7 +23,7 @@ namespace server
         {
             public Guid NodeID { get; set; }
             public IPAddress IP { get; set; }
-            public int Port { get; set; }
+            public short Port { get; set; }
             public DateTime LastActive { get; set; }
         }
     }

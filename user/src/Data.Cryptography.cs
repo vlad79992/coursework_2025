@@ -7,9 +7,7 @@ namespace user
     {
         public static byte[] ComputeHash(byte[] data)
         {
-            byte[] hashBytes = SHA256
-                .Create()
-                .ComputeHash(data);
+            byte[] hashBytes = SHA256.HashData(data);
             return hashBytes;
         }
 

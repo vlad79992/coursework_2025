@@ -1,35 +1,144 @@
 ﻿
+using Newtonsoft.Json;
+using System.Net;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Text;
+using System.Xml.Linq;
+using static user.Data;
 
 namespace user
 {
     public partial class Data
     {
-        ///отвечает за хранение узлов, на которых хранятся данные частей данных
-        public List<Tuple<Guid[] /* node id */, byte[] /* part hash */>> dataLocation; 
-        private void SendToNodes(DataPart[] dataParts, Guid[] nodes)
+        public List<Tuple<IPAddress[] /* node id */, short /* node port */, byte[] /* part hash */>> dataLocation; 
+        public bool SendData(byte[] data, Tuple<IPAddress, short> manager, int partsCount = 3, int nodesPerPart = 3)
         {
-            foreach (var part in dataParts)
+            
+            int nodesCount = nodesPerPart * partsCount;
+            Tuple<IPAddress, short>[] nodes = GetNodes(nodesCount, manager);
+            DataPart[] dataParts = DataPart.SplitData(data, partsCount);
+
+            for (int i = 0; i < partsCount; ++i)
             {
-                //TODO отправить на узел
-                //может изменить nodes с Guid на что-то нормальное
-                throw new NotImplementedException();
+                SendToNodes(dataParts[i], 
+                    nodes.Skip(i * nodesPerPart)
+                    .Take(nodesPerPart)
+                    .ToArray());
             }
         }
-        private void GetFromNodes()
+        private bool SendToNodes(DataPart dataPart, Tuple<IPAddress, short>[] nodes)
+        {
+            try
+            {
+                Request request = new("PUT", dataPart.ToByteArray());
+                var requestBytes = request.ToByteArray();
+                
+                foreach (var node in nodes)
+                {
+                    using TcpClient client = new TcpClient();
+                    client.Connect(node.Item1, node.Item2);
+
+                    using NetworkStream stream = client.GetStream();
+
+                    stream.Write(requestBytes);
+
+                    byte[] header = new byte[16];
+                    stream.ReadExactly(header);
+
+                    Request response = Request.FromByteArray(header);
+                    
+                    stream.ReadExactly(response.data);
+
+                    string command = Encoding.UTF8.GetString(response.type).TrimEnd(' ');
+
+                    if (command == "SUCCESS")
+                    {
+                        Console.WriteLine($"Data successfully sent to {node.Item1}:{node.Item2}");
+                        return true;
+                    }
+                    else
+                    {   
+                        Console.WriteLine($"Error at {node.Item1}:{node.Item2}\n\t{Encoding.UTF8.GetString(response.data)}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error: {ex.Message}");
+            }
+            return false;
+        }
+        public byte[] GetData(byte[] dataHash)
         {
             throw new NotImplementedException();
         }
-        private void GetNodes(int count)
+        private DataPart GetPart(byte[] partHash, Tuple<IPAddress, short>[] nodes)
         {
-            throw new NotImplementedException();
+            try
+            {
+                Request request = new("GET", partHash);
+
+                foreach (var node in nodes)
+                {
+                    using TcpClient client = new TcpClient();
+                    client.Connect(node.Item1, node.Item2);
+                    using NetworkStream stream = client.GetStream();
+
+                    byte[] header = new byte[16];
+
+                    stream.ReadExactly(header);
+                    Request response = Request.FromByteArray(header);
+                    stream.ReadExactly(response.data);
+
+                    DataPart dataPart = DataPart.FromByteArray(response.data);
+                    if (ComputeHash(dataPart.dataPart) == dataPart.partHash)
+                    {
+                        return dataPart;
+                    }
+                }
+                throw new Exception($"Cannot read data from nodes");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error: {ex.Message}");
+            }
+            return null;
+        }
+        private Tuple<IPAddress, short>[] GetNodes(int count, Tuple<IPAddress, short> manager)
+        {
+            try
+            {
+                Request request = new("GETNODES", null);
+
+                
+                using TcpClient client = new TcpClient();
+                client.Connect(manager.Item1, manager.Item2);
+                using NetworkStream stream = client.GetStream();
+
+                byte[] header = new byte[16];
+
+                stream.ReadExactly(header);
+                Request response = Request.FromByteArray(header);
+                stream.ReadExactly(response.data);
+
+                string json = Encoding.UTF8.GetString(request.data);
+                Tuple<IPAddress, short>[] nodes = JsonConvert.DeserializeObject<List<Tuple<IPAddress, short>>>(json).ToArray();
+
+                return nodes;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error: {ex.Message}");
+                return null;
+            }
         }
 
         public class Request
         {
-            public byte[]  type; //8 байт
-            public long    size; //8 байт размер данных
-            public byte[]  data; //данные
+            public byte[]   type; //8 байт
+            public long     size; //8 байт размер данных
+            public byte[]   data; //данные
             public Request()
             {
                 type = new byte[8];
@@ -74,6 +183,11 @@ namespace user
                 }
 
                 return request;
+            }
+            public void ReplaceData(byte[]? data)
+            {
+                this.data = data ?? Array.Empty<byte>();
+                this.size = this.data.Length;
             }
         }
     }

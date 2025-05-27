@@ -94,7 +94,7 @@ namespace server
         }
         private void SendNodesToClient(NetworkStream stream, int count)
         {
-            List<Node.NodeInfo> selectedNodes;
+            List<Tuple<IPAddress, short>> selectedNodes;
             try
             {
                 lock (nodeLock)
@@ -107,6 +107,7 @@ namespace server
                 }
                 
                 string json = Newtonsoft.Json.JsonConvert.SerializeObject(selectedNodes);
+                
                 byte[] response = Encoding.UTF8.GetBytes(json);
                 stream.Write(new user.Data.Request("NODES", response)
                                 .ToByteArray());
@@ -138,12 +139,13 @@ namespace server
                 Console.WriteLine($"Node {nodeInfo.NodeID} added");
             }
         }
-        private List<Node.NodeInfo> SelectOptimalNodes(List<Node.NodeInfo> activeNodes, int count)
+        private List<Tuple<IPAddress, short>> SelectOptimalNodes(List<Node.NodeInfo> activeNodes, int count)
         {
             var random = new Random();
             return activeNodes
                 .OrderBy(_ => random.Next())
                 .Take(count)
+                .Select(n => new Tuple<IPAddress, short>(n.IP, n.Port))
                 .ToList();
         }
         #endregion
