@@ -16,7 +16,6 @@
         {
             dataInfo = new();
             EncryptedData = encryptedData;
-            dataInfo = new();
             dataInfo.DataHash = ComputeHash(encryptedData);
             dataInfo.CreationTime = DateTime.UtcNow;
             dataInfo.UpdateTime = DateTime.UtcNow;
@@ -30,7 +29,7 @@
         public bool VerifyData(byte[] encryptedData)
         {
             byte[] hash = ComputeHash(encryptedData);
-            return dataInfo.DataHash == hash;
+            return dataInfo.DataHash.SequenceEqual(hash);
         }
     }
 }

@@ -15,10 +15,15 @@ namespace user
         public List<Tuple<IPAddress[] /* node id */, ushort /* node port */, byte[] /* part hash */>> dataLocation; 
         public bool SendData(byte[] data, Tuple<IPAddress, ushort> manager, int partsCount = 3, int nodesPerPart = 3)
         {
-            int nodesCount = nodesPerPart * (partsCount + 1); // + 1 node to save data about location of other data
+            int nodesCount = nodesPerPart * (partsCount + 1); // +1 для метаданных
             List<Tuple<byte[], Tuple<IPAddress, ushort>[]>> dataLocations = new();
             
             Tuple<IPAddress, ushort>[] nodes = GetNodes(nodesCount, manager);
+            if (nodes.Length < nodesCount)
+            {
+                throw new Exception("Not enough nodes available");
+            }
+            
             DataPart[] dataParts = DataPart.SplitData(data, partsCount);
 
             int success = 0;
@@ -30,7 +35,7 @@ namespace user
                     .ToArray();
                 success += SendToNodes(dataParts[i].ToByteArray(), 
                     nodesSend) ? 1 : 0;
-                dataLocations.Append(new Tuple<byte[], Tuple<IPAddress, ushort>[]>
+                dataLocations.Add(new Tuple<byte[], Tuple<IPAddress, ushort>[]>
                     (ComputeHash(dataParts[i].ToByteArray()), nodesSend));
             }
 
@@ -150,8 +155,7 @@ namespace user
 
                 string answer = Encoding.UTF8.GetString(response.type).TrimEnd(' ');
 
-                if (answer == "NODES");
-                else
+                if (answer != "NODES")
                 {
                     Console.WriteLine($"Error at {manager.Item1}:{manager.Item2}\tNode answer: {answer}");
                     return null;
@@ -210,7 +214,7 @@ namespace user
                         throw new Exception("Unexpected response type");
 
                     DataPart dataPart = DataPart.FromByteArray(response.data);
-                    if (ComputeHash(dataPart.dataPart) == dataPart.partHash)
+                    if (ComputeHash(dataPart.dataPart).SequenceEqual(dataPart.partHash))
                     {
                         return dataPart;
                     }

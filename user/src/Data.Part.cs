@@ -62,7 +62,8 @@ namespace user
                 part.dataPart = new byte[data.Length - hashSize * 2];
                 Buffer.BlockCopy(data, 0, part.dataHash, 0, hashSize);
                 Buffer.BlockCopy(data, hashSize, part.partHash, 0, hashSize);
-                Buffer.BlockCopy(data, hashSize * 2, part.dataPart, 0, part.dataPart.Length);
+                part.partNum = BitConverter.ToInt32(data, hashSize * 2);
+                Buffer.BlockCopy(data, hashSize * 2 + sizeof(int), part.dataPart, 0, part.dataPart.Length);
                 return part;
             }
         }

@@ -84,11 +84,12 @@ namespace server
         private TcpListener listener;
         private List<Node.NodeInfo> nodes;
         private readonly object nodeLock;
-        private Dictionary<byte[] /* data hash */, byte[] /* nodes where information about data is located */> dataLocations;
+        private Dictionary<string /* data hash */, byte[] /* nodes where information about data is located */> dataLocations;
         public ServerManager(int port)
         {
             listener = new(IPAddress.Any, port);
             nodes = new();
+            dataLocations = new();
             nodeLock = new();
         }
 
@@ -158,7 +159,7 @@ namespace server
                         }
                         break;
                     case "GET":
-                        stream.Write(new user.Data.Request("NODES", dataLocations[request.data]).ToByteArray());
+                        stream.Write(new user.Data.Request("NODES", dataLocations[Convert.ToBase64String(request.data)]).ToByteArray());
                         break;
                     case "LOCATION":
                         UpdateLocations(request.data, stream);
@@ -243,11 +244,15 @@ namespace server
         #endregion
         private void UpdateLocations(byte[] data, NetworkStream stream)
         {
+            if (data.Length < SHA256.HashSizeInBytes)
+            {
+                throw new ArgumentException("Invalid data format");
+            }
             byte[] hash = new byte[SHA256.HashSizeInBytes];
             Buffer.BlockCopy(data, 0, hash, 0, hash.Length);
             var nodeInfo = data.Skip(hash.Length).ToArray();
 
-            bool added = dataLocations.TryAdd(hash, nodeInfo);
+            bool added = dataLocations.TryAdd(Convert.ToBase64String(hash), nodeInfo);
 
             stream.Write(new Request(added ? "SUCCESS" : "ERROR", null).ToByteArray());
         }
@@ -292,19 +297,24 @@ namespace server
     {
         class Storage
         {
-            private Dictionary<byte[] /*hash*/, byte[]/*data*/> data = new();
+            private Dictionary<string /*hash*/, byte[]/*data*/> data = new();
 
             public void Add(byte[] dataPart)
             {
-                data.Add(user.Data.ComputeHash(dataPart), dataPart);
+                string hashKey = Convert.ToBase64String(user.Data.ComputeHash(dataPart));
+                if (!data.ContainsKey(hashKey))
+                {
+                    data.Add(hashKey, dataPart);
+                }
             }
             public byte[] Get(byte[] partHash)
             {
-                return data.TryGetValue(partHash, out var d) ? d : null;
+                return data.TryGetValue(
+                    Convert.ToBase64String(partHash), out var d) ? d : null;
             }
             public bool Delete(byte[] partHash)
             {
-                return data.Remove(partHash);
+                return data.Remove(Convert.ToBase64String(partHash));
             }
         }
     }
@@ -318,6 +328,7 @@ using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading.Tasks;
@@ -329,12 +340,15 @@ namespace server
     {
         private TcpListener listener;
 
-        public void Start()
+        public void Start(Tuple<IPAddress, ushort> manager)
         {
             listener = new(nodeInfo.IP, nodeInfo.Port);
             listener.Start();
             Console.WriteLine($"Node {nodeInfo.NodeID} is running on {nodeInfo.IP}:{nodeInfo.Port}");
+            RegisterNodeWithServer(manager);
+
             Task.Run(() => ListenForDataConnections());
+            Task.Run(() => SendUpdates(manager));
         }
         private async Task ListenForDataConnections()
         {
@@ -425,7 +439,44 @@ namespace server
                 PrintError(stream, ex);
             }
         }
+        private void RegisterNodeWithServer(Tuple<IPAddress, ushort> manager)
+        {
+            using TcpClient client = new();
+            client.Connect(manager.Item1, manager.Item2);
 
+            using NetworkStream stream = client.GetStream();
+            
+            var nodeJson = JsonConvert.SerializeObject(nodeInfo);
+            var request = new user.Data.Request("REGISTER", Encoding.UTF8.GetBytes(nodeJson));
+            stream.Write(request.ToByteArray());
+        }
+        private async Task SendUpdates(Tuple<IPAddress, ushort> manager)
+        {
+            while (true)
+            {
+                try
+                {
+                    nodeInfo.LastActive = DateTime.UtcNow;
+
+                    string json = JsonConvert.SerializeObject(nodeInfo);
+                    byte[] data = Encoding.UTF8.GetBytes(json);
+
+                    using var client = new TcpClient();
+                    await client.ConnectAsync(manager.Item1, manager.Item2);
+                    using var stream = client.GetStream();
+
+                    var request = new Request("UPDATE", data);
+                    var requestBytes = request.ToByteArray();
+                    await stream.WriteAsync(requestBytes, 0, requestBytes.Length);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Ошибка отправки UPDATE: {ex.Message}");
+                }
+
+                await Task.Delay(15000);
+            }
+        }
         private static void PrintError(NetworkStream stream, Exception ex)
         {
             Console.WriteLine($"Error: {ex.Message}");
@@ -465,7 +516,6 @@ namespace user
         {
             dataInfo = new();
             EncryptedData = encryptedData;
-            dataInfo = new();
             dataInfo.DataHash = ComputeHash(encryptedData);
             dataInfo.CreationTime = DateTime.UtcNow;
             dataInfo.UpdateTime = DateTime.UtcNow;
@@ -479,7 +529,7 @@ namespace user
         public bool VerifyData(byte[] encryptedData)
         {
             byte[] hash = ComputeHash(encryptedData);
-            return dataInfo.DataHash == hash;
+            return dataInfo.DataHash.SequenceEqual(hash);
         }
     }
 }
@@ -574,10 +624,15 @@ namespace user
         public List<Tuple<IPAddress[] /* node id */, ushort /* node port */, byte[] /* part hash */>> dataLocation; 
         public bool SendData(byte[] data, Tuple<IPAddress, ushort> manager, int partsCount = 3, int nodesPerPart = 3)
         {
-            int nodesCount = nodesPerPart * (partsCount + 1); // + 1 node to save data about location of other data
+            int nodesCount = nodesPerPart * (partsCount + 1); // +1 для метаданных
             List<Tuple<byte[], Tuple<IPAddress, ushort>[]>> dataLocations = new();
             
             Tuple<IPAddress, ushort>[] nodes = GetNodes(nodesCount, manager);
+            if (nodes.Length < nodesCount)
+            {
+                throw new Exception("Not enough nodes available");
+            }
+            
             DataPart[] dataParts = DataPart.SplitData(data, partsCount);
 
             int success = 0;
@@ -589,7 +644,7 @@ namespace user
                     .ToArray();
                 success += SendToNodes(dataParts[i].ToByteArray(), 
                     nodesSend) ? 1 : 0;
-                dataLocations.Append(new Tuple<byte[], Tuple<IPAddress, ushort>[]>
+                dataLocations.Add(new Tuple<byte[], Tuple<IPAddress, ushort>[]>
                     (ComputeHash(dataParts[i].ToByteArray()), nodesSend));
             }
 
@@ -709,8 +764,7 @@ namespace user
 
                 string answer = Encoding.UTF8.GetString(response.type).TrimEnd(' ');
 
-                if (answer == "NODES");
-                else
+                if (answer != "NODES")
                 {
                     Console.WriteLine($"Error at {manager.Item1}:{manager.Item2}\tNode answer: {answer}");
                     return null;
@@ -769,7 +823,7 @@ namespace user
                         throw new Exception("Unexpected response type");
 
                     DataPart dataPart = DataPart.FromByteArray(response.data);
-                    if (ComputeHash(dataPart.dataPart) == dataPart.partHash)
+                    if (ComputeHash(dataPart.dataPart).SequenceEqual(dataPart.partHash))
                     {
                         return dataPart;
                     }
@@ -976,7 +1030,8 @@ namespace user
                 part.dataPart = new byte[data.Length - hashSize * 2];
                 Buffer.BlockCopy(data, 0, part.dataHash, 0, hashSize);
                 Buffer.BlockCopy(data, hashSize, part.partHash, 0, hashSize);
-                Buffer.BlockCopy(data, hashSize * 2, part.dataPart, 0, part.dataPart.Length);
+                part.partNum = BitConverter.ToInt32(data, hashSize * 2);
+                Buffer.BlockCopy(data, hashSize * 2 + sizeof(int), part.dataPart, 0, part.dataPart.Length);
                 return part;
             }
         }

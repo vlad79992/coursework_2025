@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading.Tasks;
@@ -13,12 +14,15 @@ namespace server
     {
         private TcpListener listener;
 
-        public void Start()
+        public void Start(Tuple<IPAddress, ushort> manager)
         {
             listener = new(nodeInfo.IP, nodeInfo.Port);
             listener.Start();
             Console.WriteLine($"Node {nodeInfo.NodeID} is running on {nodeInfo.IP}:{nodeInfo.Port}");
+            RegisterNodeWithServer(manager);
+
             Task.Run(() => ListenForDataConnections());
+            Task.Run(() => SendUpdates(manager));
         }
         private async Task ListenForDataConnections()
         {
@@ -109,7 +113,44 @@ namespace server
                 PrintError(stream, ex);
             }
         }
+        private void RegisterNodeWithServer(Tuple<IPAddress, ushort> manager)
+        {
+            using TcpClient client = new();
+            client.Connect(manager.Item1, manager.Item2);
 
+            using NetworkStream stream = client.GetStream();
+            
+            var nodeJson = JsonConvert.SerializeObject(nodeInfo);
+            var request = new user.Data.Request("REGISTER", Encoding.UTF8.GetBytes(nodeJson));
+            stream.Write(request.ToByteArray());
+        }
+        private async Task SendUpdates(Tuple<IPAddress, ushort> manager)
+        {
+            while (true)
+            {
+                try
+                {
+                    nodeInfo.LastActive = DateTime.UtcNow;
+
+                    string json = JsonConvert.SerializeObject(nodeInfo);
+                    byte[] data = Encoding.UTF8.GetBytes(json);
+
+                    using var client = new TcpClient();
+                    await client.ConnectAsync(manager.Item1, manager.Item2);
+                    using var stream = client.GetStream();
+
+                    var request = new Request("UPDATE", data);
+                    var requestBytes = request.ToByteArray();
+                    await stream.WriteAsync(requestBytes, 0, requestBytes.Length);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Ошибка отправки UPDATE: {ex.Message}");
+                }
+
+                await Task.Delay(15000);
+            }
+        }
         private static void PrintError(NetworkStream stream, Exception ex)
         {
             Console.WriteLine($"Error: {ex.Message}");

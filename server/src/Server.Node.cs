@@ -33,19 +33,24 @@ namespace server
     {
         class Storage
         {
-            private Dictionary<byte[] /*hash*/, byte[]/*data*/> data = new();
+            private Dictionary<string /*hash*/, byte[]/*data*/> data = new();
 
             public void Add(byte[] dataPart)
             {
-                data.Add(user.Data.ComputeHash(dataPart), dataPart);
+                string hashKey = Convert.ToBase64String(user.Data.ComputeHash(dataPart));
+                if (!data.ContainsKey(hashKey))
+                {
+                    data.Add(hashKey, dataPart);
+                }
             }
             public byte[] Get(byte[] partHash)
             {
-                return data.TryGetValue(partHash, out var d) ? d : null;
+                return data.TryGetValue(
+                    Convert.ToBase64String(partHash), out var d) ? d : null;
             }
             public bool Delete(byte[] partHash)
             {
-                return data.Remove(partHash);
+                return data.Remove(Convert.ToBase64String(partHash));
             }
         }
     }

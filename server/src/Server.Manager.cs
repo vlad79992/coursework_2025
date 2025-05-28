@@ -13,11 +13,12 @@ namespace server
         private TcpListener listener;
         private List<Node.NodeInfo> nodes;
         private readonly object nodeLock;
-        private Dictionary<byte[] /* data hash */, byte[] /* nodes where information about data is located */> dataLocations;
+        private Dictionary<string /* data hash */, byte[] /* nodes where information about data is located */> dataLocations;
         public ServerManager(int port)
         {
             listener = new(IPAddress.Any, port);
             nodes = new();
+            dataLocations = new();
             nodeLock = new();
         }
 
@@ -87,7 +88,7 @@ namespace server
                         }
                         break;
                     case "GET":
-                        stream.Write(new user.Data.Request("NODES", dataLocations[request.data]).ToByteArray());
+                        stream.Write(new user.Data.Request("NODES", dataLocations[Convert.ToBase64String(request.data)]).ToByteArray());
                         break;
                     case "LOCATION":
                         UpdateLocations(request.data, stream);
@@ -172,11 +173,15 @@ namespace server
         #endregion
         private void UpdateLocations(byte[] data, NetworkStream stream)
         {
+            if (data.Length < SHA256.HashSizeInBytes)
+            {
+                throw new ArgumentException("Invalid data format");
+            }
             byte[] hash = new byte[SHA256.HashSizeInBytes];
             Buffer.BlockCopy(data, 0, hash, 0, hash.Length);
             var nodeInfo = data.Skip(hash.Length).ToArray();
 
-            bool added = dataLocations.TryAdd(hash, nodeInfo);
+            bool added = dataLocations.TryAdd(Convert.ToBase64String(hash), nodeInfo);
 
             stream.Write(new Request(added ? "SUCCESS" : "ERROR", null).ToByteArray());
         }
