@@ -1,5 +1,6 @@
 ﻿
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
@@ -13,40 +14,61 @@ namespace user
     public partial class Data
     {
         public List<Tuple<IPAddress[] /* node id */, ushort /* node port */, byte[] /* part hash */>> dataLocation; 
-        public bool SendData(byte[] data, Tuple<IPAddress, ushort> manager, int partsCount = 3, int nodesPerPart = 3)
+        public byte[] SendData(byte[] data, Tuple<IPAddress, ushort> manager, int partsCount = 3, int nodesPerPart = 3)
         {
-            int nodesCount = nodesPerPart * (partsCount + 1); // +1 для метаданных
-            List<Tuple<byte[], Tuple<IPAddress, ushort>[]>> dataLocations = new();
-            
-            Tuple<IPAddress, ushort>[] nodes = GetNodes(nodesCount, manager);
-            if (nodes.Length < nodesCount)
+            var settings = new JsonSerializerSettings();
+            settings.Converters.Add(new IPAddressConverter());
+            try
             {
-                throw new Exception("Not enough nodes available");
+                int nodesCount = nodesPerPart * (partsCount + 1); // +1 для метаданных
+                List<Tuple<byte[], Tuple<IPAddress, ushort>[]>> dataLocations = new();
+
+                Tuple<IPAddress, ushort>[] nodes = GetNodes(nodesCount, manager);
+                if (nodes == null)
+                {
+                    throw new NullReferenceException("GetNodes returned null");
+                }
+                if (nodes.Length < nodesCount)
+                {
+                    throw new Exception("Not enough nodes available");
+                }
+
+                DataPart[] dataParts = DataPart.SplitData(data, partsCount);
+
+                int success = 0;
+
+                for (int i = 0; i < partsCount; ++i)
+                {
+                    Tuple<IPAddress, ushort>[] nodesSend = nodes.Skip(i * nodesPerPart)
+                        .Take(nodesPerPart)
+                        .ToArray();
+                    success += SendToNodes(dataParts[i].ToByteArray(),
+                        nodesSend) ? 1 : 0;
+                    dataLocations.Add(new Tuple<byte[], Tuple<IPAddress, ushort>[]>
+                        (ComputeHash(dataParts[i].ToByteArray()), nodesSend));
+                }
+
+                var byteLocations = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(dataLocations, settings));
+
+                success += SendToNodes(byteLocations, nodes.Skip(nodesCount - nodesPerPart).ToArray()) ? 1 : 0;
+                success += SendLocation(manager, 
+                    ComputeHash(byteLocations),
+                    byteLocations
+                    ) ? 1 : 0;
+                if (success == partsCount + 1 + 1)
+                {
+                    return ComputeHash(byteLocations);
+                }
+                else
+                {
+                    return null;
+                }
             }
-            
-            DataPart[] dataParts = DataPart.SplitData(data, partsCount);
-
-            int success = 0;
-
-            for (int i = 0; i < partsCount; ++i)
+            catch (Exception ex)
             {
-                Tuple<IPAddress, ushort>[] nodesSend = nodes.Skip(i * nodesPerPart)
-                    .Take(nodesPerPart)
-                    .ToArray();
-                success += SendToNodes(dataParts[i].ToByteArray(), 
-                    nodesSend) ? 1 : 0;
-                dataLocations.Add(new Tuple<byte[], Tuple<IPAddress, ushort>[]>
-                    (ComputeHash(dataParts[i].ToByteArray()), nodesSend));
+                Console.WriteLine(ex.ToString());
+                return null;
             }
-
-            var byteLocations = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(dataLocations
-                .Select(x => new Tuple<byte[], Tuple<string, ushort>[]>(x.Item1, 
-                    x.Item2.Select(n => new Tuple<string, ushort>(n.Item1.ToString(), n.Item2)).ToArray())
-                )));
-
-            success += SendToNodes(byteLocations, nodes.Skip(nodesCount - nodesPerPart).ToArray()) ? 1 : 0;
-            success += SendLocation(manager, byteLocations) ? 1 : 0;
-            return success == partsCount + 1 + 1;
         }
         private bool SendToNodes(byte[] data, Tuple<IPAddress, ushort>[] nodes)
         {
@@ -91,11 +113,11 @@ namespace user
             }
             return false;
         }
-        private bool SendLocation(Tuple<IPAddress, ushort> manager, byte[] data)
+        private bool SendLocation(Tuple<IPAddress, ushort> manager, byte[] infoHash, byte[] infoLocations)
         {
             try
             {
-                Request request = new("LOCATION", data);
+                Request request = new("LOCATION", infoHash.Concat(infoLocations).ToArray());
                 var requestBytes = request.ToByteArray();
 
                 using TcpClient client = new TcpClient();
@@ -134,8 +156,11 @@ namespace user
         }
         public byte[] GetData(Tuple<IPAddress, ushort> manager, byte[] hash)
         {
+            var settings = new JsonSerializerSettings();
+            settings.Converters.Add(new IPAddressConverter());
             try
             {
+                Console.WriteLine($"Getting {Convert.ToBase64String(hash)} from manager");
                 Request request = new("GET", hash);
                 var requestBytes = request.ToByteArray();
 
@@ -162,10 +187,8 @@ namespace user
                 }
 
                 List<Tuple<byte[], Tuple<IPAddress, ushort>[]>> dataLocations = new();
-                // надо переписать на что-то нормальное, а всего-то нужно было спарсить json со string и перевести string в IPAddress
-                dataLocations = JsonConvert.DeserializeObject<List<Tuple<byte[], Tuple<string, ushort>[]>>>(Encoding.UTF8.GetString(response.data))
-                                           .Select(x => new Tuple<byte[], Tuple<IPAddress, ushort>[]>(x.Item1, x.Item2.Select(n => new Tuple<IPAddress, ushort>(IPAddress.Parse(n.Item1), n.Item2))
-                                                                                                                      .ToArray()))
+                
+                dataLocations = JsonConvert.DeserializeObject<List<Tuple<byte[], Tuple<IPAddress, ushort>[]>>>(Encoding.UTF8.GetString(response.data), settings)
                                            .ToList();
 
                 var dataParts = new DataPart[dataLocations.Count];
@@ -204,6 +227,8 @@ namespace user
                     client.Connect(node.Item1, node.Item2);
                     using NetworkStream stream = client.GetStream();
 
+                    stream.Write(request.ToByteArray());
+
                     byte[] header = new byte[16];
 
                     stream.ReadExactly(header);
@@ -233,6 +258,9 @@ namespace user
         }
         private Tuple<IPAddress, ushort>[] GetNodes(int count, Tuple<IPAddress, ushort> manager)
         {
+            var settings = new JsonSerializerSettings();
+            settings.Converters.Add(new IPAddressConverter());
+
             try
             {
                 Request request = new("GETNODES", BitConverter.GetBytes(count));
@@ -250,9 +278,10 @@ namespace user
                 stream.ReadExactly(response.data);
 
                 string json = Encoding.UTF8.GetString(response.data);
-                Tuple<IPAddress, ushort>[] nodes = JsonConvert.DeserializeObject<List<Tuple<string, ushort>>>(json)
-                                                              .Select(n => new Tuple<IPAddress, ushort>(IPAddress.Parse(n.Item1), n.Item2))
-                                                              .ToArray();
+                //Tuple<IPAddress, ushort>[] nodes = JsonConvert.DeserializeObject<List<Tuple<string, ushort>>>(json)
+                //                                              .Select(n => new Tuple<IPAddress, ushort>(IPAddress.Parse(n.Item1), n.Item2))
+                //                                              .ToArray();
+                Tuple<IPAddress, ushort>[] nodes = JsonConvert.DeserializeObject<List<Tuple<IPAddress, ushort>>>(json, settings).ToArray();
 
                 return nodes;
             }
@@ -336,7 +365,10 @@ namespace user
                 if (request.size > 0)
                 {
                     request.data = new byte[request.size];
-                    Buffer.BlockCopy(buffer, 16, request.data, 0, request.data.Length);
+                    if (buffer.Length == 16 + request.size)
+                    {
+                        Buffer.BlockCopy(buffer, 16, request.data, 0, request.data.Length);
+                    }
                 }
                 else
                 {
@@ -349,6 +381,19 @@ namespace user
             {
                 this.data = data ?? Array.Empty<byte>();
                 this.size = this.data.Length;
+            }
+        }
+        public class IPAddressConverter : JsonConverter<IPAddress>
+        {
+            public override void WriteJson(JsonWriter writer, IPAddress value, JsonSerializer serializer)
+            {
+                writer.WriteValue(value.ToString());
+            }
+
+            public override IPAddress ReadJson(JsonReader reader, Type objectType, IPAddress existingValue, bool hasExistingValue, JsonSerializer serializer)
+            {
+                JToken token = JToken.Load(reader);
+                return IPAddress.Parse(token.Value<string>());
             }
         }
     }

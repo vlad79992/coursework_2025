@@ -10,7 +10,7 @@
         }
 
         private byte[] EncryptedData { get; set; }
-        private DataInfo dataInfo;
+        public DataInfo dataInfo;
 
         public Data(byte[] encryptedData)
         {

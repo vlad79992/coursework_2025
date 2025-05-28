@@ -4,6 +4,10 @@
 FROM mcr.microsoft.com/dotnet/runtime:9.0 AS base
 USER $APP_UID
 WORKDIR /app
+EXPOSE 5000
+EXPOSE 6000
+EXPOSE 6001
+EXPOSE 6002
 
 
 # Этот этап используется для сборки проекта службы

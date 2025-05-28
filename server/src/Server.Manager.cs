@@ -26,7 +26,7 @@ namespace server
         public void Start()
         {
             listener.Start();
-            Console.WriteLine("Server is running");
+            Console.WriteLine($"Server is running on {listener.Server.LocalEndPoint.ToString()}");
             Task.Run(() => ListenForConnections());
         }
         private async Task ListenForConnections()
@@ -39,6 +39,9 @@ namespace server
         }
         private void HandleConnections(TcpClient client)
         {
+            var settings = new JsonSerializerSettings();
+            settings.Converters.Add(new IPAddressConverter());
+
             try 
             {
                 using NetworkStream stream = client.GetStream();
@@ -60,7 +63,7 @@ namespace server
                         if (request.data.Length > 0)
                         {
                             string json = Encoding.UTF8.GetString(request.data);
-                            Node.NodeInfo nodeInfo = JsonConvert.DeserializeObject<Node.NodeInfo>(json);
+                            Node.NodeInfo nodeInfo = JsonConvert.DeserializeObject<Node.NodeInfo>(json, settings);
                             RegisterNode(nodeInfo);
                         }
                         break;
@@ -83,7 +86,7 @@ namespace server
                         if (request.data.Length > 0)
                         {
                             string json = Encoding.UTF8.GetString(request.data);
-                            Node.NodeInfo nodeInfo = JsonConvert.DeserializeObject<Node.NodeInfo>(json);
+                            Node.NodeInfo nodeInfo = JsonConvert.DeserializeObject<Node.NodeInfo>(json, settings);
                             UpdateNode(nodeInfo);
                         }
                         break;
@@ -101,7 +104,9 @@ namespace server
             }
             catch (Exception ex)
             {
+                Console.ForegroundColor = ConsoleColor.DarkRed;
                 Console.WriteLine($"Error handling client: {ex.Message}");
+                Console.ResetColor();
             }
             finally
             {
@@ -136,7 +141,9 @@ namespace server
             }
             catch (Exception ex)
             {
+                Console.ForegroundColor = ConsoleColor.DarkRed;
                 Console.WriteLine($"Error sending nodes: {ex.Message}");
+                Console.ResetColor();
             }
         }
         #endregion
@@ -145,6 +152,7 @@ namespace server
         {
             lock (nodeLock)
             {
+                Console.WriteLine($"Node {nodeInfo.NodeID} updated at {DateTime.UtcNow}"); //!!! ONLY for debug !!!
                 var existing = nodes.FirstOrDefault(n => n.NodeID == nodeInfo.NodeID);
                 if (existing != null)
                     existing.LastActive = DateTime.UtcNow;
@@ -152,13 +160,13 @@ namespace server
         }
         private void RegisterNode(Node.NodeInfo nodeInfo)
         {
-            if (!nodes.Any(n => n.NodeID == nodeInfo.NodeID))
+            lock (nodeLock)
             {
-                lock (nodeLock)
+                if (!nodes.Any(n => n.NodeID == nodeInfo.NodeID))
                 {
                     nodes.Add(nodeInfo);
+                    Console.WriteLine($"Node {nodeInfo.NodeID} added");
                 }
-                Console.WriteLine($"Node {nodeInfo.NodeID} added");
             }
         }
         private List<Tuple<IPAddress, ushort>> SelectOptimalNodes(List<Node.NodeInfo> activeNodes, int count)
@@ -170,6 +178,10 @@ namespace server
                 .Select(n => new Tuple<IPAddress, ushort>(n.IP, n.Port))
                 .ToList();
         }
+
+
+
+
         #endregion
         private void UpdateLocations(byte[] data, NetworkStream stream)
         {
@@ -182,7 +194,9 @@ namespace server
             var nodeInfo = data.Skip(hash.Length).ToArray();
 
             bool added = dataLocations.TryAdd(Convert.ToBase64String(hash), nodeInfo);
-
+            Console.ForegroundColor = ConsoleColor.DarkGreen;
+            Console.WriteLine($"Added {Convert.ToBase64String(hash)} to dataLocations");
+            Console.ResetColor();
             stream.Write(new Request(added ? "SUCCESS" : "ERROR", null).ToByteArray());
         }
     }

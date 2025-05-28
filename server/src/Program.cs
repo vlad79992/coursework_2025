@@ -9,14 +9,35 @@ namespace server
     {
         static void Main(string[] args)
         {
-            byte[] bytes = [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
-            var serialized = JsonConvert.SerializeObject(bytes);
-            Console.WriteLine(serialized);
-            byte[] bytesDeserialized = JsonConvert.DeserializeObject<byte[]>(serialized);
+            ServerManager manager = new(5000);
+            manager.Start();
 
-            foreach (var item in bytes) Console.Write($"[{item}]");
-            Console.WriteLine();
-            foreach (var item in bytesDeserialized) Console.Write($"[{item}]");
+            StartNode("127.0.0.1",
+                      6000,
+                      new Tuple<IPAddress, ushort>(IPAddress.Parse("127.0.0.1"), 5000));
+            StartNode("127.0.0.1",
+                      6001,
+                      new Tuple<IPAddress, ushort>(IPAddress.Parse("127.0.0.1"), 5000));
+            StartNode("127.0.0.1",
+                      6002,
+                      new Tuple<IPAddress, ushort>(IPAddress.Parse("127.0.0.1"), 5000));
+            
+            Console.ForegroundColor = ConsoleColor.DarkBlue;
+            Console.WriteLine("""
+                              ███████████████████████████████████████████████████
+                              █Система запущена. Нажмите Enter для завершения...█
+                              ███████████████████████████████████████████████████
+                              """);
+            Console.ResetColor();
+            Console.ReadLine();
+        }
+        static void StartNode(string ipAddress, int port, Tuple<IPAddress, ushort> manager)
+        {
+            Task.Run(() =>
+            {
+                Node node = new Node(ipAddress, (ushort)port);
+                node.Start(manager);
+            });
         }
     }
 }

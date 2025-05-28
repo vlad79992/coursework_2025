@@ -20,14 +20,36 @@ namespace server
     {
         static void Main(string[] args)
         {
-            byte[] bytes = [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
-            var serialized = JsonConvert.SerializeObject(bytes);
-            Console.WriteLine(serialized);
-            byte[] bytesDeserialized = JsonConvert.DeserializeObject<byte[]>(serialized);
+            ServerManager manager = new(5000);
+            manager.Start();
 
-            foreach (var item in bytes) Console.Write($"[{item}]");
-            Console.WriteLine();
-            foreach (var item in bytesDeserialized) Console.Write($"[{item}]");
+            StartNode("127.0.0.1",
+                      6000,
+                      new Tuple<IPAddress, ushort>(IPAddress.Parse("127.0.0.1"), 5000));
+            StartNode("127.0.0.1",
+                      6001,
+                      new Tuple<IPAddress, ushort>(IPAddress.Parse("127.0.0.1"), 5000));
+            StartNode("127.0.0.1",
+                      6002,
+                      new Tuple<IPAddress, ushort>(IPAddress.Parse("127.0.0.1"), 5000));
+            
+            Console.ForegroundColor = ConsoleColor.DarkBlue;
+            Console.WriteLine("""
+                              ███████████████████████████████████████████████████
+                              █Система запущена. Нажмите Enter для завершения...█
+                              ███████████████████████████████████████████████████
+                              """);
+            Console.ResetColor();
+            Console.ReadLine();
+        }
+        static void StartNode(string ipAddress, int port, Tuple<IPAddress, ushort> manager)
+        {
+            Task.Run(() =>
+            {
+                Node node = new Node(ipAddress, (ushort)port);
+                node.Start(manager);
+                //Console.WriteLine($"Узел запущен на {ipAddress}:{port}");
+            });
         }
     }
 }
@@ -97,7 +119,7 @@ namespace server
         public void Start()
         {
             listener.Start();
-            Console.WriteLine("Server is running");
+            Console.WriteLine($"Server is running on {listener.Server.LocalEndPoint.ToString()}");
             Task.Run(() => ListenForConnections());
         }
         private async Task ListenForConnections()
@@ -110,6 +132,9 @@ namespace server
         }
         private void HandleConnections(TcpClient client)
         {
+            var settings = new JsonSerializerSettings();
+            settings.Converters.Add(new IPAddressConverter());
+
             try 
             {
                 using NetworkStream stream = client.GetStream();
@@ -131,7 +156,7 @@ namespace server
                         if (request.data.Length > 0)
                         {
                             string json = Encoding.UTF8.GetString(request.data);
-                            Node.NodeInfo nodeInfo = JsonConvert.DeserializeObject<Node.NodeInfo>(json);
+                            Node.NodeInfo nodeInfo = JsonConvert.DeserializeObject<Node.NodeInfo>(json, settings);
                             RegisterNode(nodeInfo);
                         }
                         break;
@@ -154,7 +179,7 @@ namespace server
                         if (request.data.Length > 0)
                         {
                             string json = Encoding.UTF8.GetString(request.data);
-                            Node.NodeInfo nodeInfo = JsonConvert.DeserializeObject<Node.NodeInfo>(json);
+                            Node.NodeInfo nodeInfo = JsonConvert.DeserializeObject<Node.NodeInfo>(json, settings);
                             UpdateNode(nodeInfo);
                         }
                         break;
@@ -216,6 +241,7 @@ namespace server
         {
             lock (nodeLock)
             {
+                Console.WriteLine($"Node {nodeInfo.NodeID} updated"); //!!! ONLY for debug !!!
                 var existing = nodes.FirstOrDefault(n => n.NodeID == nodeInfo.NodeID);
                 if (existing != null)
                     existing.LastActive = DateTime.UtcNow;
@@ -241,6 +267,10 @@ namespace server
                 .Select(n => new Tuple<IPAddress, ushort>(n.IP, n.Port))
                 .ToList();
         }
+
+
+
+
         #endregion
         private void UpdateLocations(byte[] data, NetworkStream stream)
         {
@@ -327,6 +357,7 @@ namespace server
 using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
@@ -342,11 +373,11 @@ namespace server
 
         public void Start(Tuple<IPAddress, ushort> manager)
         {
-            listener = new(nodeInfo.IP, nodeInfo.Port);
-            listener.Start();
             Console.WriteLine($"Node {nodeInfo.NodeID} is running on {nodeInfo.IP}:{nodeInfo.Port}");
+            listener = new(nodeInfo.IP, nodeInfo.Port);
             RegisterNodeWithServer(manager);
 
+            listener.Start();
             Task.Run(() => ListenForDataConnections());
             Task.Run(() => SendUpdates(manager));
         }
@@ -441,24 +472,32 @@ namespace server
         }
         private void RegisterNodeWithServer(Tuple<IPAddress, ushort> manager)
         {
+            var settings = new JsonSerializerSettings();
+            settings.Converters.Add(new user.Data.IPAddressConverter());
+
             using TcpClient client = new();
             client.Connect(manager.Item1, manager.Item2);
 
             using NetworkStream stream = client.GetStream();
             
-            var nodeJson = JsonConvert.SerializeObject(nodeInfo);
+            var nodeJson = JsonConvert.SerializeObject(nodeInfo, settings);
             var request = new user.Data.Request("REGISTER", Encoding.UTF8.GetBytes(nodeJson));
+
             stream.Write(request.ToByteArray());
         }
         private async Task SendUpdates(Tuple<IPAddress, ushort> manager)
         {
+            var settings = new JsonSerializerSettings();
+            settings.Converters.Add(new IPAddressConverter());
             while (true)
             {
+                await Task.Delay(TimeSpan.FromSeconds(15));
+                
                 try
                 {
                     nodeInfo.LastActive = DateTime.UtcNow;
 
-                    string json = JsonConvert.SerializeObject(nodeInfo);
+                    string json = JsonConvert.SerializeObject(nodeInfo, settings);
                     byte[] data = Encoding.UTF8.GetBytes(json);
 
                     using var client = new TcpClient();
@@ -467,14 +506,13 @@ namespace server
 
                     var request = new Request("UPDATE", data);
                     var requestBytes = request.ToByteArray();
+                    //Console.WriteLine("Sending UPDATE request");
                     await stream.WriteAsync(requestBytes, 0, requestBytes.Length);
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"Ошибка отправки UPDATE: {ex.Message}");
                 }
-
-                await Task.Delay(15000);
             }
         }
         private static void PrintError(NetworkStream stream, Exception ex)

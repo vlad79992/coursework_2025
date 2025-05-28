@@ -59,7 +59,7 @@ namespace user
                 DataPart part = new DataPart();
                 part.dataHash = new byte[hashSize];
                 part.partHash = new byte[hashSize];
-                part.dataPart = new byte[data.Length - hashSize * 2];
+                part.dataPart = new byte[data.Length - hashSize * 2 - sizeof(int)];
                 Buffer.BlockCopy(data, 0, part.dataHash, 0, hashSize);
                 Buffer.BlockCopy(data, hashSize, part.partHash, 0, hashSize);
                 part.partNum = BitConverter.ToInt32(data, hashSize * 2);

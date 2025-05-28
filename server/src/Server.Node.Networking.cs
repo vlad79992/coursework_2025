@@ -1,6 +1,7 @@
 ﻿using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
@@ -16,11 +17,11 @@ namespace server
 
         public void Start(Tuple<IPAddress, ushort> manager)
         {
-            listener = new(nodeInfo.IP, nodeInfo.Port);
-            listener.Start();
             Console.WriteLine($"Node {nodeInfo.NodeID} is running on {nodeInfo.IP}:{nodeInfo.Port}");
+            listener = new(nodeInfo.IP, nodeInfo.Port);
             RegisterNodeWithServer(manager);
 
+            listener.Start();
             Task.Run(() => ListenForDataConnections());
             Task.Run(() => SendUpdates(manager));
         }
@@ -68,7 +69,9 @@ namespace server
             }
             catch (Exception ex)
             {
+                Console.ForegroundColor = ConsoleColor.Red;
                 Console.WriteLine($"Error handling client: {ex.Message}");
+                Console.ResetColor();
             }
             finally
             {
@@ -115,24 +118,32 @@ namespace server
         }
         private void RegisterNodeWithServer(Tuple<IPAddress, ushort> manager)
         {
+            var settings = new JsonSerializerSettings();
+            settings.Converters.Add(new user.Data.IPAddressConverter());
+
             using TcpClient client = new();
             client.Connect(manager.Item1, manager.Item2);
 
             using NetworkStream stream = client.GetStream();
             
-            var nodeJson = JsonConvert.SerializeObject(nodeInfo);
+            var nodeJson = JsonConvert.SerializeObject(nodeInfo, settings);
             var request = new user.Data.Request("REGISTER", Encoding.UTF8.GetBytes(nodeJson));
+
             stream.Write(request.ToByteArray());
         }
         private async Task SendUpdates(Tuple<IPAddress, ushort> manager)
         {
+            var settings = new JsonSerializerSettings();
+            settings.Converters.Add(new IPAddressConverter());
             while (true)
             {
+                await Task.Delay(TimeSpan.FromSeconds(15));
+                
                 try
                 {
                     nodeInfo.LastActive = DateTime.UtcNow;
 
-                    string json = JsonConvert.SerializeObject(nodeInfo);
+                    string json = JsonConvert.SerializeObject(nodeInfo, settings);
                     byte[] data = Encoding.UTF8.GetBytes(json);
 
                     using var client = new TcpClient();
@@ -141,19 +152,20 @@ namespace server
 
                     var request = new Request("UPDATE", data);
                     var requestBytes = request.ToByteArray();
+                    //Console.WriteLine("Sending UPDATE request");
                     await stream.WriteAsync(requestBytes, 0, requestBytes.Length);
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"Ошибка отправки UPDATE: {ex.Message}");
                 }
-
-                await Task.Delay(15000);
             }
         }
         private static void PrintError(NetworkStream stream, Exception ex)
         {
+            Console.ForegroundColor = ConsoleColor.DarkRed;
             Console.WriteLine($"Error: {ex.Message}");
+            Console.ResetColor();
             stream.Write(new Request("ERROR", Encoding.UTF8.GetBytes(ex.Message)).ToByteArray());
         }
     }

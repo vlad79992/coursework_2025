@@ -120,6 +120,7 @@ namespace user
 === FILE: Data.Networking.cs ===
 
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
@@ -254,6 +255,8 @@ namespace user
         }
         public byte[] GetData(Tuple<IPAddress, ushort> manager, byte[] hash)
         {
+            var settings = new JsonSerializerSettings();
+            settings.Converters.Add(new IPAddressConverter());
             try
             {
                 Request request = new("GET", hash);
@@ -282,10 +285,8 @@ namespace user
                 }
 
                 List<Tuple<byte[], Tuple<IPAddress, ushort>[]>> dataLocations = new();
-                // надо переписать на что-то нормальное, а всего-то нужно было спарсить json со string и перевести string в IPAddress
-                dataLocations = JsonConvert.DeserializeObject<List<Tuple<byte[], Tuple<string, ushort>[]>>>(Encoding.UTF8.GetString(response.data))
-                                           .Select(x => new Tuple<byte[], Tuple<IPAddress, ushort>[]>(x.Item1, x.Item2.Select(n => new Tuple<IPAddress, ushort>(IPAddress.Parse(n.Item1), n.Item2))
-                                                                                                                      .ToArray()))
+                
+                dataLocations = JsonConvert.DeserializeObject<List<Tuple<byte[], Tuple<IPAddress, ushort>[]>>>(Encoding.UTF8.GetString(response.data), settings)
                                            .ToList();
 
                 var dataParts = new DataPart[dataLocations.Count];
@@ -353,6 +354,9 @@ namespace user
         }
         private Tuple<IPAddress, ushort>[] GetNodes(int count, Tuple<IPAddress, ushort> manager)
         {
+            var settings = new JsonSerializerSettings();
+            settings.Converters.Add(new IPAddressConverter());
+
             try
             {
                 Request request = new("GETNODES", BitConverter.GetBytes(count));
@@ -370,9 +374,10 @@ namespace user
                 stream.ReadExactly(response.data);
 
                 string json = Encoding.UTF8.GetString(response.data);
-                Tuple<IPAddress, ushort>[] nodes = JsonConvert.DeserializeObject<List<Tuple<string, ushort>>>(json)
-                                                              .Select(n => new Tuple<IPAddress, ushort>(IPAddress.Parse(n.Item1), n.Item2))
-                                                              .ToArray();
+                //Tuple<IPAddress, ushort>[] nodes = JsonConvert.DeserializeObject<List<Tuple<string, ushort>>>(json)
+                //                                              .Select(n => new Tuple<IPAddress, ushort>(IPAddress.Parse(n.Item1), n.Item2))
+                //                                              .ToArray();
+                Tuple<IPAddress, ushort>[] nodes = JsonConvert.DeserializeObject<List<Tuple<IPAddress, ushort>>>(json, settings).ToArray();
 
                 return nodes;
             }
@@ -456,7 +461,10 @@ namespace user
                 if (request.size > 0)
                 {
                     request.data = new byte[request.size];
-                    Buffer.BlockCopy(buffer, 16, request.data, 0, request.data.Length);
+                    if (buffer.Length == 16 + request.size)
+                    {
+                        Buffer.BlockCopy(buffer, 16, request.data, 0, request.data.Length);
+                    }
                 }
                 else
                 {
@@ -469,6 +477,19 @@ namespace user
             {
                 this.data = data ?? Array.Empty<byte>();
                 this.size = this.data.Length;
+            }
+        }
+        public class IPAddressConverter : JsonConverter<IPAddress>
+        {
+            public override void WriteJson(JsonWriter writer, IPAddress value, JsonSerializer serializer)
+            {
+                writer.WriteValue(value.ToString());
+            }
+
+            public override IPAddress ReadJson(JsonReader reader, Type objectType, IPAddress existingValue, bool hasExistingValue, JsonSerializer serializer)
+            {
+                JToken token = JToken.Load(reader);
+                return IPAddress.Parse(token.Value<string>());
             }
         }
     }
